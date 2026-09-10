@@ -6,6 +6,10 @@ Status
 
 **Draft** (=> Provisional)
 
+This ADR records several related decisions in one document because they were
+settled together. Later detail goes in new ADRs that this one links to, not
+in edits to this one in place.
+
 Context
 *******
 
@@ -21,9 +25,12 @@ between them.
   (deprecated), Typesense (beta, LMS only), and a mock used in tests.
 * **Forum search** is served by ``openedx/forum``, which carries its own
   ``es.py``, ``meilisearch.py`` and ``typesense.py`` under ``forum/search/``.
-* **Notes** are served by ``edx-notes-api``, still on Elasticsearch 7 through
-  ``django-elasticsearch-dsl-drf``. It is the last consumer with no path off
-  Elasticsearch at all.
+* **Notes** are served by ``edx-notes-api``, which picks one of three backends
+  from settings: Elasticsearch 7 through ``django-elasticsearch-dsl-drf`` (the
+  default in its own settings), Meilisearch (``edx-notes-api#444``), and a
+  MySQL fallback. Tutor has shipped the Meilisearch backend as the default
+  since ``tutor-notes`` v19.0.0. That backend is thinner than the Elasticsearch
+  one: it indexes only the note ``text`` and returns no highlighting.
 
 Every one of those is a separate engine integration. An operator configures
 each independently, and adding an engine means implementing it up to four
@@ -302,9 +309,9 @@ platform, replacing ``edx-search`` and the private engine layer inside
 4. **We do not carry Elasticsearch or OpenSearch forward, and the goal is to
    retire them from the platform entirely.** This is stronger than declaring
    them out of scope. ``edx-search`` still ships an Elasticsearch engine and
-   ``edx-notes-api`` runs on nothing else, so retirement is a migration with a
-   defined end, not a deprecation notice. The engine-family boundary is what
-   makes the abstraction narrow enough to survive, per
+   ``edx-notes-api`` still defaults to one outside Tutor, so retirement is a
+   migration with a defined end, not a deprecation notice. The engine-family
+   boundary is what makes the abstraction narrow enough to survive, per
    ``modular-learning#245``.
 
    Doing this properly means filing a DEPR proposal for ``edx-search``, which
@@ -451,12 +458,13 @@ Consequences
      so anything that pages must take its page size from the backend rather
      than assume one.
 
-9. ``edx-notes-api`` is the migration with the least precedent, because it is
-   the only consumer moving off Elasticsearch rather than between
-   Algolia-shaped engines. Its document is small and maps cleanly — nine flat
-   fields, keyword search over ``text`` and ``tags``, filters on ``user``,
-   ``course_id`` and ``usage_id``, ordering by ``-updated`` — but three things
-   do not carry across, and the last of them is an API contract:
+9. ``edx-notes-api`` already has a Meilisearch backend, but it is precedent
+   for the transport, not for the behaviour: it dropped tag search and
+   highlighting rather than porting them. Its document is small and maps
+   cleanly — nine flat fields, keyword search over ``text`` and ``tags``,
+   filters on ``user``, ``course_id`` and ``usage_id``, ordering by
+   ``-updated`` — but three things in the Elasticsearch backend do not carry
+   across, and the last of them is an API contract:
 
    * It declares custom Elasticsearch analyzers. ``html_strip`` combines the
      ``html_strip`` char filter with lowercase, stop-word and snowball
@@ -473,6 +481,8 @@ Consequences
      edxapp consumes. Both engines support custom highlight tags, so the
      markers can be preserved exactly — but they have to be configured
      deliberately, and the name will be a lie once Elasticsearch is gone.
+     The existing Meilisearch backend does not emit them at all, so a
+     deployment on it today already gets unhighlighted results.
 
 Open Questions
 **************
@@ -495,8 +505,10 @@ Open Questions
   that handles it will handle the simpler ones, whereas starting simple risks
   discovering the API shape is wrong after it is public. It also delivers the
   motivating outcome soonest, letting an operator run Typesense alone.
-  ``edx-notes-api`` is last and is the one that ends the Elasticsearch
-  retirement. Who picks up each piece is not decided.
+  ``edx-notes-api`` is last. It already has a path off Elasticsearch through
+  its own Meilisearch backend, so ending the retirement there is a DEPR on its
+  Elasticsearch backend, not a dependency on this library. Who picks up each
+  piece is not decided.
 
 Rejected Alternatives
 *********************
@@ -591,6 +603,9 @@ References
   https://github.com/openedx/openedx-platform/pull/39049
 * openedx/forum#289, the forum Typesense search fixes —
   https://github.com/openedx/forum/pull/289
+* openedx/edx-notes-api#444, the Meilisearch backend for notes, which
+  ``tutor-notes`` v19.0.0 made Tutor's default —
+  https://github.com/openedx/edx-notes-api/pull/444
 * overhangio/tutor#1141, which removed Elasticsearch from Tutor in favour of
   Meilisearch on memory-usage grounds —
   https://github.com/overhangio/tutor/pull/1141
