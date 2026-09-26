@@ -1,0 +1,86 @@
+name: CI
+
+# Every check that runs on a pull request, aggregated behind a single
+# "all required checks passed" job. Branch protection only needs to require
+# that one name, so adding or retiring a Django version from the matrix never
+# requires a change to the repository settings.
+
+on:
+  pull_request:
+    branches:
+      - "**"
+  # So the release workflow can run every check before it publishes anything.
+  workflow_call:
+
+concurrency:
+  # On a pull request, group by the PR so a new push supersedes the run still
+  # going for the previous one. Any other event -- notably the workflow_call
+  # from the release -- keys on the unique run id, so release runs never queue
+  # behind or cancel each other.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  run_tests:
+    name: tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.12"]
+        toxenv: [quality, docs, pii_check, django52, django60]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: setup python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          # Every matrix job populates the uv cache with a different set of tox
+          # dependencies, so give each one its own cache key.
+          cache-suffix: ${{ matrix.toxenv }}
+
+      - name: Install CI dependencies
+        run: uv sync --group ci
+
+      - name: Run Tests
+        env:
+          TOXENV: ${{ matrix.toxenv }}
+        # `uv sync` does not put tox on PATH, so run it through uv.
+        run: uv run tox
+
+      - name: Run coverage
+        if: matrix.python-version == '3.12' && matrix.toxenv == 'django52'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          fail_ci_if_error: true
+
+  required_checks:
+    # This name is what branch protection requires, so changing it means
+    # updating the repository settings at the same moment.
+    name: all required checks passed
+    # `always()` so this still reports when something upstream fails. A skipped
+    # required check never reports, which blocks the pull request forever.
+    if: always()
+    needs: [run_tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every job succeeded
+        run: |
+          results='${{ join(needs.*.result, ' ') }}'
+          echo "Job results: $results"
+          for result in $results; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A required job reported '$result'."
+              exit 1
+            fi
+          done
+          echo "All jobs succeeded."
