@@ -3,9 +3,8 @@
 Testing
 #######
 
-openedx_search has an assortment of test cases and code quality
-checks to catch potential problems during development.  To run them all in the
-version of Python you chose for your virtualenv:
+openedx-search has an assortment of test cases and code quality
+checks to catch potential problems during development.  To run them all:
 
 .. code-block:: bash
 
@@ -29,8 +28,8 @@ To run just the code quality checks:
 
     $ make quality
 
-To run the unit tests under every supported Python version and the code
-quality checks:
+To run the unit tests under every supported Django version, plus the code
+quality, PII annotation and documentation checks, as CI does:
 
 .. code-block:: bash
 

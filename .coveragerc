@@ -1,10 +1,8 @@
 [run]
 branch = True
 data_file = .coverage
-source=sample_plugin
+source=openedx_search
 omit =
     test_settings.py
     */migrations/*
     *admin.py
-    */static/*
-    */templates/*
