@@ -5,16 +5,6 @@ In a real-world use case, apps in this project are installed into other
 Django applications, so these settings will not be used.
 """
 
-from os.path import abspath, dirname, join
-
-
-def root(*args):
-    """
-    Get the absolute path of the given path relative to the project root.
-    """
-    return join(abspath(dirname(__file__)), *args)
-
-
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -32,18 +22,14 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.messages",
     "django.contrib.sessions",
-    "rest_framework",
-    "django_filters",
-    "django_extensions",
-]
-
-LOCALE_PATHS = [
-    root("openedx_search", "conf", "locale"),
+    "openedx_search",
 ]
 
 ROOT_URLCONF = "tests.urls"
 
 SECRET_KEY = "insecure-secret-key"
+
+USE_TZ = True
 
 MIDDLEWARE = (
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -64,27 +50,6 @@ TEMPLATES = [
         },
     }
 ]
-
-REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    "DEFAULT_FILTER_BACKENDS": [
-        "django_filters.rest_framework.DjangoFilterBackend",
-        "rest_framework.filters.OrderingFilter",
-    ],
-    "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
-    ],
-    "DEFAULT_THROTTLE_RATES": {
-        "anon": "20/hour",
-        "user": "100/hour",
-    },
-}
 
 LOGGING = {
     "version": 1,
