@@ -1,12 +1,9 @@
-.. openedx_search documentation top level file, created by
-   sphinx-quickstart on Fri Apr 11 10:00:56 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+openedx-search
+##############
 
-openedx_search
-=====================
-
-A sample backend plugin for the Open edX Platform
+A search library for the Open edX platform, supporting Typesense and
+Meilisearch. See :doc:`decisions/0001-purpose-of-this-repo` for why it exists
+and what it is meant to become.
 
 Contents:
 
@@ -18,14 +15,13 @@ Contents:
    concepts/index
    how-tos/index
    testing
-   internationalization
    modules
    decisions
    references/index
 
 
 Indices and tables
-##################
+******************
 
 * :ref:`genindex`
 * :ref:`modindex`

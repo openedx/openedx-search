@@ -12,19 +12,17 @@ All configuration values have a default; values that are commented out
 serve to show the default.
 """
 import os
-import re
 import sys
 from datetime import datetime
+from importlib.metadata import version as get_version
 from subprocess import check_call
 
 from django import setup as django_setup
-from importlib.metadata import version as get_version
-
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(REPO_ROOT)
 
-VERSION = get_version('openedx-plugin-sample')
+VERSION = get_version('openedx-search')
 # Configure Django for autodoc usage
 os.environ['DJANGO_SETTINGS_MODULE'] = 'test_settings'
 django_setup()
@@ -76,17 +74,17 @@ source_suffix = '.rst'
 top_level_doc = 'index'
 
 # General information about the project.
-project = 'openedx_search'
+project = 'openedx-search'
 copyright = f'{datetime.now().year}, Axim Collaborative, Inc.'  # pylint: disable=redefined-builtin
 author = 'Axim Collaborative, Inc.'
-project_title = 'openedx_search'
+project_title = 'openedx-search'
 documentation_title = f"{project_title}"
 
 # Set display_github to False if you don't want "edit on Github" button
 html_context = {
     "display_github": True,  # Integrate GitHub
-    "github_user": "edx",  # Username
-    "github_repo": 'sample-plugin',  # Repo name
+    "github_user": "openedx",  # Username
+    "github_repo": 'openedx-search',  # Repo name
     "github_version": "main",  # Version
     "conf_py_path": "/docs/",  # Path in the checkout to the docs root
 }
@@ -171,7 +169,7 @@ html_theme = 'sphinx_book_theme'
 # documentation.
 #
 html_theme_options = {
-    "repository_url": "https://github.com/openedx/sample-plugin",
+    "repository_url": "https://github.com/openedx/openedx-search",
     "repository_branch": 'main',
     "path_to_docs": "docs/",
     "home_page_in_toc": True,
@@ -208,7 +206,7 @@ html_theme_options = {
 # The name for this set of Sphinx documents.
 # "<project> v<release> documentation" by default.
 #
-# html_title = 'openedx_search v0.1.0'
+# html_title = 'openedx-search v0.1.0'
 
 # A shorter title for the navigation bar.  Default is the same as html_title.
 #
@@ -394,7 +392,7 @@ man_pages = [
 #  dir menu entry, description, category)
 texinfo_documents = [
     (top_level_doc, project_title, documentation_title,
-     author, project_title, 'A sample backend plugin for the Open edX Platform',
+     author, project_title, 'A search library for the Open edX Platform',
      'Miscellaneous'),
 ]
 
@@ -503,8 +501,7 @@ epub_exclude_files = ['search.html']
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3.12', None),
-    'django': ('https://docs.djangoproject.com/en/4.2/', 'https://docs.djangoproject.com/en/3.2/_objects/'),
-    'model_utils': ('https://django-model-utils.readthedocs.io/en/latest/', None),
+    'django': ('https://docs.djangoproject.com/en/5.2/', 'https://docs.djangoproject.com/en/5.2/_objects/'),
 }
 
 
@@ -517,11 +514,9 @@ def on_init(app):  # pylint: disable=unused-argument
     """
     docs_path = os.path.abspath(os.path.dirname(__file__))
     root_path = os.path.abspath(os.path.join(docs_path, '..'))
-    apidoc_path = 'sphinx-apidoc'
-    if hasattr(sys, 'real_prefix'):  # Check to see if we are in a virtualenv
-        # If we are, assemble the path manually
-        bin_path = os.path.abspath(os.path.join(sys.prefix, 'bin'))
-        apidoc_path = os.path.join(bin_path, apidoc_path)
+    # Use the sphinx-apidoc installed alongside the running Python, which may
+    # not be on PATH (e.g. under `uv run` or Read the Docs).
+    apidoc_path = os.path.join(os.path.dirname(sys.executable), 'sphinx-apidoc')
     check_call([apidoc_path, '-o', docs_path, os.path.join(root_path, 'src/openedx_search'),
                 os.path.join(root_path, 'src/openedx_search/migrations')])
 

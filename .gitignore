@@ -54,16 +54,13 @@ ghostdriver.log
 output/*.html
 output/*/index.html
 
-# Sphinx
+# Sphinx (sphinx-apidoc output is regenerated on every build)
 docs/_build
 docs/modules.rst
-docs/sample_plugin.rst
-docs/sample_plugin.*.rst
-
-# Private requirements
-requirements/private.in
-requirements/private.txt
+docs/openedx_search.rst
+docs/openedx_search.*.rst
 
 # Test cruft
 default.db
 pii_report
+pyproject.toml.orig
