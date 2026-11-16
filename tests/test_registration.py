@@ -108,6 +108,12 @@ def test_unregister_use_case():
         get_registration("studio_course")
 
 
+def test_unregister_unknown_use_case_raises():
+    """Removing an unregistered use case is an error."""
+    with pytest.raises(UseCaseNotRegistered):
+        unregister_use_case("missing")
+
+
 def test_unknown_use_case_raises():
     """Looking up an unregistered use case is an error."""
     with pytest.raises(UseCaseNotRegistered):

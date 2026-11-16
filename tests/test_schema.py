@@ -263,6 +263,12 @@ def test_facetable_implies_filterable():
     assert capabilities.filterable is True
 
 
+def test_facetable_keeps_an_explicit_filterable():
+    """An explicit filterable flag survives facet normalization."""
+    capabilities = Capabilities(facetable=True, filterable=True)
+    assert capabilities.filterable is True
+
+
 def test_duplicate_field_names_are_rejected():
     """Two fields cannot share a path."""
     with pytest.raises(SchemaError, match="duplicate field name"):
@@ -417,6 +423,11 @@ def test_searchable_order_must_be_positive():
         Searchable(order=0)
 
 
+def test_searchable_order_is_optional():
+    """A searchable field may omit the ranking position."""
+    assert Searchable().order is None
+
+
 def test_field_lookup_by_name():
     """``field`` returns the declared entry and raises for unknown names."""
     assert STUDIO_COURSE_SCHEMA.field("usage_key").type is FieldType.STRING
@@ -434,3 +445,9 @@ def test_schema_fields_must_be_field_instances():
     """A sequence of strings is not a field list."""
     with pytest.raises(SchemaError, match="Field instances"):
         IndexSchema(name="bad_fields", fields=("abc",))
+
+
+def test_invalid_field_type_raises():
+    """A field type must be one the supported engines share."""
+    with pytest.raises(SchemaError, match="invalid field type"):
+        Field("title", "nope")

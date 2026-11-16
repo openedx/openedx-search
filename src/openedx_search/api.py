@@ -73,7 +73,7 @@ def upsert(use_case: str, documents: DocumentBatch) -> WriteReceipt:
     with a different schema version is a migration, whose writers are stopped;
     submitting to it raises ``SchemaVersionMismatch``.
     """
-    raise NotImplementedError("upsert is implemented with the engine adapters")
+    raise NotImplementedError("upsert is implemented with the engine adapters")  # pragma: no cover
 
 
 def _normalize_primary_keys(
@@ -109,7 +109,7 @@ def delete(
     reindex the delete is also submitted to the target; a target with a
     different version raises ``SchemaVersionMismatch``.
     """
-    raise NotImplementedError("delete is implemented with the engine adapters")
+    raise NotImplementedError("delete is implemented with the engine adapters")  # pragma: no cover
 
 
 def check_write(use_case: str, receipt: WriteReceipt) -> WriteReceipt:
@@ -121,7 +121,7 @@ def check_write(use_case: str, receipt: WriteReceipt) -> WriteReceipt:
     already-complete receipt without a request. The worker calls this until the
     receipt is complete and raises when the engine reports a failed write.
     """
-    raise NotImplementedError("check_write is implemented with the engine adapters")
+    raise NotImplementedError("check_write is implemented with the engine adapters")  # pragma: no cover
 
 
 def rebuild(use_case: str, document_source: DocumentSource) -> RebuildResult:
@@ -160,7 +160,7 @@ def rebuild(use_case: str, document_source: DocumentSource) -> RebuildResult:
     way if the source yields the deleted document afterwards. A migration has no
     such window because its writers are stopped.
     """
-    raise NotImplementedError("rebuild is implemented with the engine adapters")
+    raise NotImplementedError("rebuild is implemented with the engine adapters")  # pragma: no cover
 
 
 def search(use_case: str, query: Any) -> SearchResult:
@@ -171,7 +171,7 @@ def search(use_case: str, query: Any) -> SearchResult:
     browser queries the engine directly with a scoped credential, so this does
     not proxy the frontend's searches. The query model lands with the query API.
     """
-    raise NotImplementedError("search is implemented with the engine adapters")
+    raise NotImplementedError("search is implemented with the engine adapters")  # pragma: no cover
 
 
 def mint_credential(  # pylint: disable=unused-argument
@@ -193,4 +193,4 @@ def mint_credential(  # pylint: disable=unused-argument
     """
     if expires_in <= timedelta(0):
         raise ValueError("expires_in must be positive")
-    raise NotImplementedError("mint_credential is implemented with the engine adapters")
+    raise NotImplementedError("mint_credential is implemented with the engine adapters")  # pragma: no cover

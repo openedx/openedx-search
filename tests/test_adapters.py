@@ -1,10 +1,77 @@
 """Tests for the adapter contract types."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from openedx_search.adapters import CredentialScope, FilterGroup, FilterTerm, RebuildTarget, SearchCredential
+from openedx_search.adapters import (
+    Adapter,
+    CredentialScope,
+    FilterGroup,
+    FilterTerm,
+    RebuildTarget,
+    ReconcileResult,
+    SearchCredential,
+    SearchResult,
+    WriteReceipt,
+)
+from openedx_search.config import BackendConfig
+from tests.fixtures import STUDIO_COURSE
+
+
+class _StubAdapter(Adapter):  # pragma: no cover
+    """A minimal adapter that exercises the base class."""
+
+    def validate_schema(self) -> None:
+        """Accept every schema."""
+
+    def reconcile(self) -> ReconcileResult:
+        """Report no change."""
+        return ReconcileResult(index=self.index, version=self.schema.version)
+
+    def begin_rebuild(self, target: RebuildTarget) -> None:
+        """Do nothing."""
+
+    def commit_rebuild(self, target: RebuildTarget) -> None:
+        """Do nothing."""
+
+    def abort_rebuild(self, target: RebuildTarget) -> None:
+        """Do nothing."""
+
+    def upsert(self, documents, target: RebuildTarget | None = None) -> WriteReceipt:
+        """Report a complete write."""
+        return WriteReceipt(complete=True)
+
+    def delete(
+        self,
+        primary_keys=None,
+        *,
+        filter=None,  # pylint: disable=redefined-builtin
+        target: RebuildTarget | None = None,
+    ) -> WriteReceipt:
+        """Report a complete delete."""
+        return WriteReceipt(complete=True)
+
+    def check_write(self, receipt: WriteReceipt) -> WriteReceipt:
+        """Return the receipt."""
+        return receipt
+
+    def search(self, query) -> SearchResult:
+        """Return no hits."""
+        return SearchResult(documents=(), total=0)
+
+    def mint_credential(self, scope: CredentialScope, expires_in: timedelta) -> SearchCredential:
+        """Return a fixed credential."""
+        return SearchCredential(url="http://fake", index_name=self.index, api_key="key")
+
+
+def test_adapter_exposes_its_registration():
+    """The base class stores the registration and exposes index and schema."""
+    backend = BackendConfig(name="fake", engine="meilisearch", url="http://localhost:7700", api_key="key")
+    adapter = _StubAdapter(STUDIO_COURSE, backend)
+
+    assert adapter.index == STUDIO_COURSE.index
+    assert adapter.schema is STUDIO_COURSE.schema
 
 
 def test_credential_scope_defaults_to_no_filters():
@@ -141,6 +208,24 @@ def test_filter_term_rejects_a_mapping():
     """A mapping would be split into its keys."""
     with pytest.raises(ValueError, match="not a mapping"):
         FilterTerm("org", {"openedx": 1})
+
+
+def test_filter_term_rejects_an_invalid_field():
+    """The field must be a dotted path the engines can address."""
+    with pytest.raises(ValueError, match="invalid filter field"):
+        FilterTerm("bad field", ("openedx",))
+
+
+def test_filter_term_rejects_empty_values():
+    """A term with no values cannot match anything."""
+    with pytest.raises(ValueError, match="at least one value"):
+        FilterTerm("org", ())
+
+
+def test_filter_term_rejects_an_empty_string_value():
+    """An empty string is not a filter value."""
+    with pytest.raises(ValueError, match="must not be empty"):
+        FilterTerm("org", ("",))
 
 
 def test_filter_term_rejects_a_non_sequence():
