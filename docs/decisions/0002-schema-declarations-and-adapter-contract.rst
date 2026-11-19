@@ -4,7 +4,7 @@
 Status
 ******
 
-**Draft** (for upstream discussion)
+**Proposed**
 
 Context
 *******
