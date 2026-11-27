@@ -1,74 +1,27 @@
 """Tests for the adapter contract types."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from openedx_search.adapters import (
-    Adapter,
     CredentialScope,
     FilterGroup,
     FilterTerm,
     RebuildTarget,
-    ReconcileResult,
     SearchCredential,
-    SearchResult,
-    WriteReceipt,
+    SearchQuery,
+    normalize_filter_expression,
 )
 from openedx_search.config import BackendConfig
+from tests.fakes import FakeAdapter
 from tests.fixtures import STUDIO_COURSE
-
-
-class _StubAdapter(Adapter):  # pragma: no cover
-    """A minimal adapter that exercises the base class."""
-
-    def validate_schema(self) -> None:
-        """Accept every schema."""
-
-    def reconcile(self) -> ReconcileResult:
-        """Report no change."""
-        return ReconcileResult(index=self.index, version=self.schema.version)
-
-    def begin_rebuild(self, target: RebuildTarget) -> None:
-        """Do nothing."""
-
-    def commit_rebuild(self, target: RebuildTarget) -> None:
-        """Do nothing."""
-
-    def abort_rebuild(self, target: RebuildTarget) -> None:
-        """Do nothing."""
-
-    def upsert(self, documents, target: RebuildTarget | None = None) -> WriteReceipt:
-        """Report a complete write."""
-        return WriteReceipt(complete=True)
-
-    def delete(
-        self,
-        primary_keys=None,
-        *,
-        filter=None,  # pylint: disable=redefined-builtin
-        target: RebuildTarget | None = None,
-    ) -> WriteReceipt:
-        """Report a complete delete."""
-        return WriteReceipt(complete=True)
-
-    def check_write(self, receipt: WriteReceipt) -> WriteReceipt:
-        """Return the receipt."""
-        return receipt
-
-    def search(self, query) -> SearchResult:
-        """Return no hits."""
-        return SearchResult(documents=(), total=0)
-
-    def mint_credential(self, scope: CredentialScope, expires_in: timedelta) -> SearchCredential:
-        """Return a fixed credential."""
-        return SearchCredential(url="http://fake", index_name=self.index, api_key="key")
 
 
 def test_adapter_exposes_its_registration():
     """The base class stores the registration and exposes index and schema."""
     backend = BackendConfig(name="fake", engine="meilisearch", url="http://localhost:7700", api_key="key")
-    adapter = _StubAdapter(STUDIO_COURSE, backend)
+    adapter = FakeAdapter(STUDIO_COURSE, backend)
 
     assert adapter.index == STUDIO_COURSE.index
     assert adapter.schema is STUDIO_COURSE.schema
@@ -146,6 +99,12 @@ def test_credential_scope_requires_filter_groups():
     """The scope holds FilterGroup values, not terms or strings."""
     with pytest.raises(ValueError, match="FilterGroup"):
         CredentialScope(filters=("org",))  # type: ignore[arg-type]
+
+
+def test_normalize_filter_expression_rejects_a_non_sequence():
+    """An integer is not a sequence of groups."""
+    with pytest.raises(ValueError, match="sequence of FilterGroup"):
+        normalize_filter_expression(1)  # type: ignore[arg-type]
 
 
 def test_rebuild_target_name_includes_a_generation():
@@ -262,3 +221,36 @@ def test_filter_term_rejects_none():
     """Documents carry no nulls, so a null filter value has no meaning."""
     with pytest.raises(ValueError, match="invalid filter value"):
         FilterTerm("last_published", (None,))
+
+
+def test_search_query_defaults_to_the_first_page():
+    """An empty query matches everything and asks for the first page."""
+    query = SearchQuery()
+
+    assert (query.text, query.filters, query.offset, query.limit) == ("", (), 0, 20)
+
+
+def test_search_query_freezes_filters():
+    """A list of groups passed at construction is frozen into a tuple."""
+    group = FilterGroup((FilterTerm("id", ("doc-1",)),))
+
+    query = SearchQuery(text="course", filters=[group], offset=10, limit=10)
+
+    assert query.filters == (group,)
+    assert (query.text, query.offset, query.limit) == ("course", 10, 10)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"text": None}, "text must be a string"),
+        ({"filters": "id = x"}, "not a string"),
+        ({"offset": -1}, "non-negative integer"),
+        ({"limit": 0}, "positive integer"),
+        ({"limit": True}, "positive integer"),
+    ],
+)
+def test_search_query_rejects_invalid_parts(kwargs, message):
+    """The query is typed and bounded before any adapter sees it."""
+    with pytest.raises(ValueError, match=message):
+        SearchQuery(**kwargs)

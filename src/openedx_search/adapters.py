@@ -9,19 +9,22 @@ class exists so an engine contribution has one place to see the full surface.
 
 from __future__ import annotations
 
+import threading
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, TypeAlias
 
-from .config import BackendConfig
+from .config import BackendConfig, get_backend_config
 from .registry import UseCaseRegistration
 from .schema import FIELD_NAME_PATTERN, INDEX_NAME_PATTERN, IndexSchema
 
 __all__ = [
     "Adapter",
     "AdapterError",
+    "AdapterFactory",
+    "AdapterNotRegistered",
     "CredentialScope",
     "Document",
     "DocumentBatch",
@@ -33,10 +36,14 @@ __all__ = [
     "RebuildTarget",
     "ReconcileResult",
     "SearchCredential",
+    "SearchQuery",
     "SearchResult",
     "UnsupportedSchema",
     "WriteFailed",
     "WriteReceipt",
+    "clear_adapter_registry",
+    "get_adapter",
+    "register_adapter",
 ]
 
 Document: TypeAlias = Mapping[str, Any]
@@ -113,6 +120,31 @@ class FilterGroup:
 FilterExpression: TypeAlias = tuple[FilterGroup, ...]
 
 
+def normalize_filter_expression(
+    filters: FilterExpression,
+    *,
+    raise_if_empty: bool = False,
+) -> tuple[FilterGroup, ...]:
+    """
+    Validate and freeze a sequence of ``FilterGroup`` values.
+
+    Raises ``ValueError`` for a string, a non-sequence or a non-group item, and
+    for an empty sequence when ``raise_if_empty`` is true.
+    """
+    if isinstance(filters, (str, bytes)):
+        raise ValueError("filters must be a sequence of FilterGroup, not a string")
+    try:
+        groups = tuple(filters)
+    except TypeError as exc:
+        raise ValueError("filters must be a sequence of FilterGroup") from exc
+    if not groups and raise_if_empty:
+        raise ValueError("filters must not be empty")
+    for group in groups:
+        if not isinstance(group, FilterGroup):
+            raise ValueError("filters must contain FilterGroup instances")
+    return groups
+
+
 @dataclass(frozen=True)
 class CredentialScope:
     """Tenant filters for a scoped frontend credential."""
@@ -121,13 +153,7 @@ class CredentialScope:
 
     def __post_init__(self) -> None:
         """Validate and freeze the filter groups."""
-        if isinstance(self.filters, (str, bytes)):
-            raise ValueError("filters must be a sequence of FilterGroup, not a string")
-        filters = tuple(self.filters)
-        for group in filters:
-            if not isinstance(group, FilterGroup):
-                raise ValueError("filters must contain FilterGroup instances")
-        object.__setattr__(self, "filters", filters)
+        object.__setattr__(self, "filters", normalize_filter_expression(self.filters))
 
 
 @dataclass(frozen=True)
@@ -198,6 +224,40 @@ class ReconcileResult:
     index: str
     version: int
     changed: bool = False
+
+
+@dataclass(frozen=True)
+class SearchQuery:
+    """
+    One search request: text, one page and exact filters.
+
+    ``text`` is the query string; an empty string matches every document.
+    ``filters`` is the same expression ``delete`` accepts, so groups are combined
+    with AND and the terms inside a group with OR. ``offset`` is the number of
+    documents to skip and ``limit`` the positive number to return. The adapter
+    rejects a page its engine cannot return in full, so an engine cap never
+    silently truncates a page.
+
+    A term with one value is an exact match (``id = x``); a term with several
+    values is an IN list (``id IN [x, y, z]``). Whether ``total`` is exact is an
+    engine property, reported in ``SearchResult.total_is_exact``, never assumed
+    from a successful request.
+    """
+
+    text: str = ""
+    filters: FilterExpression = ()
+    offset: int = 0
+    limit: int = 20
+
+    def __post_init__(self) -> None:
+        """Validate the query and freeze the filter groups."""
+        if not isinstance(self.text, str):
+            raise ValueError("text must be a string")
+        object.__setattr__(self, "filters", normalize_filter_expression(self.filters))
+        if isinstance(self.offset, bool) or not isinstance(self.offset, int) or self.offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        if isinstance(self.limit, bool) or not isinstance(self.limit, int) or self.limit < 1:
+            raise ValueError("limit must be a positive integer")
 
 
 @dataclass(frozen=True)
@@ -289,9 +349,61 @@ class Adapter(ABC):
         """Perform one status check; never sleep or retry."""
 
     @abstractmethod
-    def search(self, query: Any) -> SearchResult:
-        """Run one search. The query model is specified separately."""
+    def search(self, query: SearchQuery) -> SearchResult:
+        """Run one search with the typed query model."""
 
     @abstractmethod
     def mint_credential(self, scope: CredentialScope, expires_in: timedelta) -> SearchCredential:
         """Mint a scoped, expiring credential and the endpoint to use it against."""
+
+
+AdapterFactory: TypeAlias = Callable[[UseCaseRegistration, BackendConfig], Adapter]
+
+_adapter_factories: dict[str, AdapterFactory] = {}
+_adapter_lock = threading.RLock()
+
+
+class AdapterNotRegistered(AdapterError):
+    """No adapter is registered for the backend's engine."""
+
+
+def register_adapter(engine: str, factory: AdapterFactory, *, replace: bool = False) -> None:
+    """
+    Register the adapter factory for an engine.
+
+    Raises ``ValueError`` when the engine already has a factory, unless
+    ``replace`` is true.
+    """
+    if not isinstance(engine, str) or not engine:
+        raise ValueError("engine must be a non-empty string")
+    if not callable(factory):
+        raise ValueError("factory must be callable")
+    with _adapter_lock:
+        if engine in _adapter_factories and not replace:
+            raise ValueError(f"an adapter is already registered for engine {engine!r}")
+        _adapter_factories[engine] = factory
+
+
+def get_adapter(
+    registration: UseCaseRegistration,
+    backend: BackendConfig | None = None,
+) -> Adapter:
+    """
+    Build the adapter for a registration and its resolved backend.
+
+    Raises ``AdapterNotRegistered`` when the backend's engine has no factory.
+    """
+    backend = backend or get_backend_config(registration.use_case)
+    factory = _adapter_factories.get(backend.engine)
+    if factory is None:
+        raise AdapterNotRegistered(
+            f"no adapter is registered for engine {backend.engine!r}; "
+            "register one with register_adapter()"
+        )
+    return factory(registration, backend)
+
+
+def clear_adapter_registry() -> None:
+    """Remove every adapter factory. Intended for tests and process shutdown."""
+    with _adapter_lock:
+        _adapter_factories.clear()

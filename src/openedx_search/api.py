@@ -2,11 +2,9 @@
 Consumer-facing API for openedx-search.
 
 ADR 0002, Decision 4: consumers use this module rather than talking to an
-adapter. The functions resolve the registration and backend internally. The
-registry helpers in ``openedx_search.registry`` are not part of this surface.
-
-These functions are currently signatures and contracts only; the
-implementations land with the engine adapters.
+adapter. The functions resolve the registration, validate the input and delegate
+to the adapter for the configured backend. The registry helpers in
+``openedx_search.registry`` are not part of this surface.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 from .adapters import (
     CredentialScope,
@@ -23,17 +21,25 @@ from .adapters import (
     PrimaryKey,
     RebuildTarget,
     SearchCredential,
+    SearchQuery,
     SearchResult,
     WriteReceipt,
+    get_adapter,
+    normalize_filter_expression,
 )
+from .documents import DocumentError, validate_documents
+from .filters import validate_filter_fields
+from .registry import get_registration
 from .schema import document_id_from_key, validate_document_id
 
 __all__ = [
     "CredentialScope",
+    "DocumentError",
     "DocumentSource",
     "RebuildInProgress",
     "RebuildResult",
     "SearchCredential",
+    "SearchQuery",
     "check_write",
     "delete",
     "document_id_from_key",
@@ -62,18 +68,20 @@ def upsert(use_case: str, documents: DocumentBatch) -> WriteReceipt:
     """
     Submit one bounded batch of documents for upsert.
 
-    ``documents`` is a sequence, not a one-shot iterator, because a same-version
-    reindex in progress submits the same batch to both the live index and the
-    target. The returned receipt covers the live index; the reindex confirms the
-    target's copy before it swaps.
+    ``documents`` is a sequence, not a one-shot iterator. Every document is
+    validated against the registration's schema before it reaches the adapter,
+    so both engines accept and reject the same documents.
 
-    During a same-version reindex the batch is also submitted to the rebuild
-    target. A failure in either submission is raised to the caller. The caller
-    may retry with the same batch, since the operation is an upsert. A target
-    with a different schema version is a migration, whose writers are stopped;
-    submitting to it raises ``SchemaVersionMismatch``.
+    The rebuild target dual-write lands with the rebuild lifecycle. Until then
+    the batch is submitted to the live index only.
     """
-    raise NotImplementedError("upsert is implemented with the engine adapters")  # pragma: no cover
+    registration = get_registration(use_case)
+    if isinstance(documents, (str, bytes)) or not isinstance(documents, Sequence):
+        raise ValueError("documents must be a sequence of mappings")
+    if not documents:
+        raise ValueError("documents must not be empty")
+    validate_documents(registration.schema, documents)
+    return get_adapter(registration).upsert(documents)
 
 
 def _normalize_primary_keys(
@@ -84,6 +92,8 @@ def _normalize_primary_keys(
         return None
     if isinstance(primary_keys, str):
         return (validate_document_id(primary_keys),)
+    if isinstance(primary_keys, (bytes, bytearray)) or not isinstance(primary_keys, Sequence):
+        raise ValueError("primary_keys must be a string or a sequence of strings")
     keys = tuple(primary_keys)
     if not keys:
         raise ValueError("primary_keys must not be empty")
@@ -105,11 +115,22 @@ def delete(
     filter expression used by search, never a raw engine string.
 
     Exactly one of ``primary_keys`` and ``filter`` is required, and neither may
-    be empty, so a bare call cannot empty an index. During a same-version
-    reindex the delete is also submitted to the target; a target with a
-    different version raises ``SchemaVersionMismatch``.
+    be empty, so a bare call cannot empty an index. Every filter field must be
+    declared and filterable in the registration's schema; ``id`` is always
+    allowed. The rebuild target dual-write lands with the rebuild lifecycle.
     """
-    raise NotImplementedError("delete is implemented with the engine adapters")  # pragma: no cover
+    registration = get_registration(use_case)
+    keys = _normalize_primary_keys(primary_keys)
+    expression = (
+        None
+        if filter is None
+        else normalize_filter_expression(filter, raise_if_empty=True)
+    )
+    if (keys is None) == (expression is None):
+        raise ValueError("exactly one of primary_keys and filter is required")
+    if expression is not None:
+        validate_filter_fields(registration.schema, expression)
+    return get_adapter(registration).delete(primary_keys=keys, filter=expression)
 
 
 def check_write(use_case: str, receipt: WriteReceipt) -> WriteReceipt:
@@ -121,7 +142,10 @@ def check_write(use_case: str, receipt: WriteReceipt) -> WriteReceipt:
     already-complete receipt without a request. The worker calls this until the
     receipt is complete and raises when the engine reports a failed write.
     """
-    raise NotImplementedError("check_write is implemented with the engine adapters")  # pragma: no cover
+    if not isinstance(receipt, WriteReceipt):
+        raise ValueError("receipt must be a WriteReceipt")
+    registration = get_registration(use_case)
+    return get_adapter(registration).check_write(receipt)
 
 
 def rebuild(use_case: str, document_source: DocumentSource) -> RebuildResult:
@@ -163,18 +187,30 @@ def rebuild(use_case: str, document_source: DocumentSource) -> RebuildResult:
     raise NotImplementedError("rebuild is implemented with the engine adapters")  # pragma: no cover
 
 
-def search(use_case: str, query: Any) -> SearchResult:
+def search(use_case: str, query: SearchQuery) -> SearchResult:
     """
-    Run one query through the adapter.
+    Run one query through the adapter for the use case's backend.
 
-    This is for maintenance and conformance, not the frontend search path. The
-    browser queries the engine directly with a scoped credential, so this does
-    not proxy the frontend's searches. The query model lands with the query API.
+    ``query`` is a :class:`SearchQuery`: the text, one page and the exact
+    filters. Every filter field must be declared and filterable in the
+    registration's schema; ``id`` is always allowed. This is for maintenance
+    and conformance, not the frontend search path. The browser queries the
+    engine directly with a scoped credential, so this does not proxy the
+    frontend's searches. Whether ``total`` is exact is the engine's
+    property, reported in ``SearchResult.total_is_exact``. An adapter may reject
+    a page window beyond its engine's limit even when ``total`` reports more
+    matches. The request uses the backend's ``api_key``: on Meilisearch
+    that key needs the ``search`` action as well as the ``settings.get`` read
+    the adapter already performs for reconcile.
     """
-    raise NotImplementedError("search is implemented with the engine adapters")  # pragma: no cover
+    if not isinstance(query, SearchQuery):
+        raise ValueError("query must be a SearchQuery")
+    registration = get_registration(use_case)
+    validate_filter_fields(registration.schema, query.filters)
+    return get_adapter(registration).search(query)
 
 
-def mint_credential(  # pylint: disable=unused-argument
+def mint_credential(
     use_case: str, scope: CredentialScope, expires_in: timedelta
 ) -> SearchCredential:
     """
@@ -191,6 +227,11 @@ def mint_credential(  # pylint: disable=unused-argument
     connection URL, and the index name belongs to the adapter, so the browser
     needs all three rather than a bare key.
     """
+    if not isinstance(scope, CredentialScope):
+        raise ValueError("scope must be a CredentialScope")
+    if not isinstance(expires_in, timedelta):
+        raise ValueError("expires_in must be a timedelta")
     if expires_in <= timedelta(0):
         raise ValueError("expires_in must be positive")
-    raise NotImplementedError("mint_credential is implemented with the engine adapters")  # pragma: no cover
+    registration = get_registration(use_case)
+    return get_adapter(registration).mint_credential(scope, expires_in)
